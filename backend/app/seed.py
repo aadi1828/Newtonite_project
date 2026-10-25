@@ -1,20 +1,41 @@
+
 from sqlalchemy.orm import Session
+
 from .db import Base, engine, SessionLocal
 from .models import User, Team, Membership, WorkItem, ActivityEvent
 from .security import hash_password
 
 DEMO_PASSWORD = "NewtoniteDemo!2026"
 
+
 def seed():
     Base.metadata.create_all(bind=engine)
     db: Session = SessionLocal()
+
     try:
-        if db.query(User).filter_by(email="admin@newtonite.local").first():
+        # Check whether the demo admin already exists.
+        existing_admin = (
+            db.query(User)
+            .filter_by(email="admin@newtonite.local")
+            .first()
+        )
+
+        if existing_admin:
+            # Reset the password without deleting existing data.
+            existing_admin.password_hash = hash_password(DEMO_PASSWORD)
+            db.commit()
+            print("Existing demo admin password reset successfully.")
             return
+
+        # Create the demo teams.
         ops = Team(name="Operations")
         eng = Team(name="Engineering")
         compliance = Team(name="Compliance")
-        db.add_all([ops, eng, compliance]); db.flush()
+
+        db.add_all([ops, eng, compliance])
+        db.flush()
+
+        # Define demo users and their team memberships.
         people = [
             ("Avery Admin", "admin@newtonite.local", ["Admin"], [ops, eng, compliance]),
             ("Jordan Lead", "lead@newtonite.local", ["Lead"], [ops]),
@@ -23,28 +44,123 @@ def seed():
             ("Casey Engineer", "engineer@newtonite.local", ["Member"], [eng]),
             ("Riley Outsider", "outsider@newtonite.local", ["Member"], [compliance]),
         ]
+
         users = {}
+
         for name, email, roles, teams in people:
-            user = User(name=name, email=email, password_hash=hash_password(DEMO_PASSWORD))
-            db.add(user); db.flush(); users[email] = user
+            user = User(
+                name=name,
+                email=email,
+                password_hash=hash_password(DEMO_PASSWORD),
+            )
+
+            db.add(user)
+            db.flush()
+            users[email] = user
+
             for team in teams:
-                role = "Admin" if email.startswith("admin") else ("Lead" if email.startswith("lead") else ("Viewer" if email.startswith("viewer") else "Member"))
-                db.add(Membership(user_id=user.id, team_id=team.id, role=role))
+                if email.startswith("admin"):
+                    role = "Admin"
+                elif email.startswith("lead"):
+                    role = "Lead"
+                elif email.startswith("viewer"):
+                    role = "Viewer"
+                else:
+                    role = "Member"
+
+                db.add(
+                    Membership(
+                        user_id=user.id,
+                        team_id=team.id,
+                        role=role,
+                    )
+                )
+
         db.flush()
+
+        # Create sample work items.
         examples = [
-            ("Investigate failed payment retries", "Several payments have entered retry state and need reconciliation.", "Payment", "Urgent", "Open", ops, users["member@newtonite.local"]),
-            ("Customer cannot access account", "Review authentication events and confirm account recovery path.", "Customer Issue", "High", "In Progress", ops, users["lead@newtonite.local"]),
-            ("Review production alert threshold", "Investigate noisy alert and propose a safe threshold adjustment.", "Incident", "High", "Awaiting Approval", eng, users["engineer@newtonite.local"]),
-            ("Quarterly access review", "Confirm access for the compliance workspace.", "Compliance", "Medium", "Open", compliance, None),
-            ("Update operational runbook", "Document the recovery procedure and escalation owner.", "Task", "Low", "Resolved", ops, users["member@newtonite.local"]),
+            (
+                "Investigate failed payment retries",
+                "Several payments have entered retry state and need reconciliation.",
+                "Payment",
+                "Urgent",
+                "Open",
+                ops,
+                users["member@newtonite.local"],
+            ),
+            (
+                "Customer cannot access account",
+                "Review authentication events and confirm account recovery path.",
+                "Customer Issue",
+                "High",
+                "In Progress",
+                ops,
+                users["lead@newtonite.local"],
+            ),
+            (
+                "Review production alert threshold",
+                "Investigate noisy alert and propose a safe threshold adjustment.",
+                "Incident",
+                "High",
+                "Awaiting Approval",
+                eng,
+                users["engineer@newtonite.local"],
+            ),
+            (
+                "Quarterly access review",
+                "Confirm access for the compliance workspace.",
+                "Compliance",
+                "Medium",
+                "Open",
+                compliance,
+                None,
+            ),
+            (
+                "Update operational runbook",
+                "Document the recovery procedure and escalation owner.",
+                "Task",
+                "Low",
+                "Resolved",
+                ops,
+                users["member@newtonite.local"],
+            ),
         ]
+
         for title, desc, typ, pri, status, team, assignee in examples:
-            item = WorkItem(title=title, description=desc, item_type=typ, priority=pri, status=status, team_id=team.id, assignee_id=assignee.id if assignee else None, created_by=users["admin@newtonite.local"].id)
-            db.add(item); db.flush()
-            db.add(ActivityEvent(work_item_id=item.id, actor_id=item.created_by, action="created", new_value=title))
+            item = WorkItem(
+                title=title,
+                description=desc,
+                item_type=typ,
+                priority=pri,
+                status=status,
+                team_id=team.id,
+                assignee_id=assignee.id if assignee else None,
+                created_by=users["admin@newtonite.local"].id,
+            )
+
+            db.add(item)
+            db.flush()
+
+            db.add(
+                ActivityEvent(
+                    work_item_id=item.id,
+                    actor_id=item.created_by,
+                    action="created",
+                    new_value=title,
+                )
+            )
+
         db.commit()
+        print("Demo teams, users, and work items created successfully.")
+
+    except Exception:
+        db.rollback()
+        raise
+
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     seed()
